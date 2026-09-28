@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 import azure.functions as func
+from azure.core.exceptions import ClientAuthenticationError, ResourceNotFoundError
 from azure.data.tables import TableClient
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -66,10 +67,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return respond(400, {"error": "Velg om du kommer eller ikke."})
 
     if attending:
-        try:
-            guests = int(data.get("guests", 1))
-        except (TypeError, ValueError):
-            return respond(400, {"error": "Antall personer må være et tall."})
+        raw = data.get("guests", 1)
+        # Accept only whole numbers: 2 and "2" are fine, 1.5, "1,5" and true are not
+        if isinstance(raw, bool) or not (
+            isinstance(raw, int) or (isinstance(raw, str) and raw.strip().isdigit())
+        ):
+            return respond(400, {"error": "Antall personer må være et helt tall, for eksempel 2."})
+        guests = int(raw)
         if not 1 <= guests <= MAX_GUESTS:
             return respond(400, {"error": f"Antall personer må være mellom 1 og {MAX_GUESTS}."})
     else:
@@ -87,10 +91,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         "SubmittedAt": datetime.now(timezone.utc),
     }
 
+    global _table
     try:
         get_table().create_entity(entity)
-    except Exception:
+    except Exception as exc:
         logging.exception("Could not save RSVP")
-        return respond(500, {"error": "Svaret ble ikke lagret på grunn av en feil hos oss. Prøv igjen om litt."})
+        _table = None  # so fixed settings are picked up on the next try
+        # The code tells you (not the guest) what went wrong. It never contains secrets.
+        if isinstance(exc, KeyError):
+            code = "MISSING_SETTING"
+        elif isinstance(exc, ResourceNotFoundError):
+            code = "TABLE_NOT_FOUND"
+        elif isinstance(exc, ClientAuthenticationError):
+            code = "AUTH_FAILED"
+        elif isinstance(exc, ValueError):
+            code = "BAD_CONNECTION_STRING"
+        else:
+            code = type(exc).__name__
+        return respond(500, {
+            "error": "Svaret ble ikke lagret på grunn av en feil hos oss. Prøv igjen om litt.",
+            "code": code,
+        })
 
     return respond(200, {"ok": True})
