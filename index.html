@@ -200,7 +200,7 @@
         <div id="coming-fields" hidden>
           <div class="field">
             <label for="guests">Antall personer <span class="hint">(inkludert deg)</span></label>
-            <input type="number" id="guests" name="guests" min="1" max="10" value="1" inputmode="numeric">
+            <input type="number" id="guests" name="guests" min="1" max="10" step="1" value="1" inputmode="numeric">
           </div>
           <div class="field">
             <label for="allergies">Allergier eller matpreferanser <span class="hint">(valgfritt)</span></label>
@@ -263,6 +263,21 @@
       }
 
       const attending = attendingValue === "yes";
+      if (attending) {
+        const guestsRaw = form.guests.value.trim();
+        if (form.guests.validity.badInput || !/^\d+$/.test(guestsRaw)) {
+          showError("Antall personer må være et helt tall, for eksempel 2.");
+          form.guests.focus();
+          return;
+        }
+        const guests = Number(guestsRaw);
+        if (guests < 1 || guests > 10) {
+          showError("Antall personer må være mellom 1 og 10.");
+          form.guests.focus();
+          return;
+        }
+      }
+
       const payload = {
         name,
         email: form.email.value.trim(),
@@ -289,7 +304,10 @@
           signal: controller.signal
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Svaret ble ikke sendt. Prøv igjen om litt.");
+        if (!res.ok) {
+          const msg = data.error || "Svaret ble ikke sendt. Prøv igjen om litt.";
+          throw new Error(data.code ? msg + " (feilkode: " + data.code + ")" : msg);
+        }
 
         form.hidden = true;
         const thanks = document.getElementById("thanks");
